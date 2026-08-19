@@ -1,0 +1,6 @@
+{
+  "summary": "แผนการดำเนินงานสำหรับ Layer 1 (Data Extraction & Ingestion จาก Oracle) และ Layer 2 (Operational DB & Schema Design บน PostgreSQL)",
+  "updatedAt": "2026-08-13T10:02:03.325860100Z",
+  "requestFeedback": true,
+  "userFacing": true
+}
