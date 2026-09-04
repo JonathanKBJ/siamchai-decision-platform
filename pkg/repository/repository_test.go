@@ -66,6 +66,10 @@ func (m *mockMasterRepo) GetAllBranches(ctx context.Context) ([]models.Branch, e
 	return res, nil
 }
 
+func (m *mockMasterRepo) UpsertRegions(ctx context.Context, regions []models.Region) error { return nil }
+func (m *mockMasterRepo) GetAllRegions(ctx context.Context) ([]models.Region, error) { return nil, nil }
+func (m *mockMasterRepo) UpsertProvinces(ctx context.Context, provinces []models.Province) error { return nil }
+func (m *mockMasterRepo) GetAllProvinces(ctx context.Context) ([]models.Province, error) { return nil, nil }
 func (m *mockMasterRepo) UpsertProductBrands(ctx context.Context, brands []models.ProductBrand) error { return nil }
 func (m *mockMasterRepo) UpsertProductCategories(ctx context.Context, categories []models.ProductCategory) error { return nil }
 func (m *mockMasterRepo) UpsertProductGroups(ctx context.Context, groups []models.ProductGroup) error { return nil }

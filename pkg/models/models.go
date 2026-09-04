@@ -2,13 +2,41 @@ package models
 
 import "time"
 
-type Branch struct {
+type Region struct {
 	ID        int       `gorm:"primaryKey;column:id;autoIncrement:false" json:"id"`
-	Code      string    `gorm:"column:code" json:"code"`
+	MysqlID   *int      `gorm:"column:mysql_id" json:"mysql_id"`
 	Name      string    `gorm:"column:name;not null" json:"name"`
-	IsActive  bool      `gorm:"column:is_active;default:true" json:"is_active"`
 	CreatedAt time.Time `gorm:"column:created_at" json:"created_at"`
-	UpdatedAt time.Time `gorm:"column:updated_at" json:"updated_at"`
+}
+
+func (Region) TableName() string { return "regions" }
+
+type Province struct {
+	ID        int       `gorm:"primaryKey;column:id;autoIncrement:false" json:"id"`
+	MysqlID   *int      `gorm:"column:mysql_id" json:"mysql_id"`
+	Name      string    `gorm:"column:name;not null" json:"name"`
+	RegionID  *int      `gorm:"column:region_id" json:"region_id"`
+	CreatedAt time.Time `gorm:"column:created_at" json:"created_at"`
+}
+
+func (Province) TableName() string { return "provinces" }
+
+type Branch struct {
+	ID              int       `gorm:"primaryKey;column:id;autoIncrement:false" json:"id"`
+	Code            string    `gorm:"column:code" json:"code"`
+	Name            string    `gorm:"column:name;not null" json:"name"`
+	ProvinceID      *int      `gorm:"column:province_id" json:"province_id"`
+	MysqlProvinceID *int      `gorm:"column:mysql_province_id" json:"mysql_province_id"`
+	RegionID        *int      `gorm:"column:region_id" json:"region_id"`
+	MysqlRegionID   *int      `gorm:"column:mysql_region_id" json:"mysql_region_id"`
+	Location        string    `gorm:"column:location" json:"location"`
+	Tel             string    `gorm:"column:tel" json:"tel"`
+	Lat             *float64  `gorm:"column:lat" json:"lat"`
+	Lng             *float64  `gorm:"column:lng" json:"lng"`
+	IsHeadOffice    bool      `gorm:"column:is_head_office" json:"is_head_office"`
+	IsActive        bool      `gorm:"column:is_active" json:"is_active"`
+	CreatedAt       time.Time `gorm:"column:created_at" json:"created_at"`
+	UpdatedAt       time.Time `gorm:"column:updated_at" json:"updated_at"`
 }
 
 func (Branch) TableName() string { return "branches" }
@@ -51,7 +79,8 @@ func (ProductType) TableName() string { return "product_types" }
 
 type Product struct {
 	ID          int       `gorm:"primaryKey;column:id;autoIncrement:false" json:"id"`
-	PuProductID string    `gorm:"column:pu_product_id" json:"pu_product_id"`
+	Code        string    `gorm:"column:code" json:"code"`
+	PuProductID *int      `gorm:"column:pu_product_id" json:"pu_product_id"`
 	BrandID     *int      `gorm:"column:brand_id" json:"brand_id"`
 	CategoryID  *int      `gorm:"column:category_id" json:"category_id"`
 	GroupID     *int      `gorm:"column:group_id" json:"group_id"`
@@ -112,7 +141,7 @@ type SellDetail struct {
 	CompanyID *int      `gorm:"column:company_id" json:"company_id"`
 	ProductID *int      `gorm:"column:product_id" json:"product_id"`
 	ShopID    *int      `gorm:"column:shop_id" json:"shop_id"`
-	Qty       int       `gorm:"column:qty;not null" json:"qty"`
+	Qty       int       `gorm:"column:qty;not null;default:0" json:"qty"`
 	SellDate  time.Time `gorm:"primaryKey;column:sell_date;not null" json:"sell_date"`
 	CreatedAt time.Time `gorm:"column:created_at" json:"created_at"`
 }
@@ -121,9 +150,9 @@ func (SellDetail) TableName() string { return "sell_detail" }
 
 type StockBalance struct {
 	ID                     int       `gorm:"primaryKey;autoIncrement" json:"id"`
-	ShopID                 *int      `gorm:"column:shop_id;uniqueIndex:idx_stock_balance_shop_prod" json:"shop_id"`
-	ProductID              *int      `gorm:"column:product_id;uniqueIndex:idx_stock_balance_shop_prod" json:"product_id"`
-	PuProductID            *int      `gorm:"column:pu_product_id" json:"pu_product_id"`
+	ShopID                 *int      `gorm:"column:shop_id;uniqueIndex:idx_stock_balance_shop_pu" json:"shop_id"`
+	PuProductID            *int      `gorm:"column:pu_product_id;uniqueIndex:idx_stock_balance_shop_pu" json:"pu_product_id"`
+	ProductID              *int      `gorm:"column:product_id" json:"product_id"`
 	Qty                    int       `gorm:"column:qty;not null;default:0" json:"qty"`
 	CurrentQty             float64   `gorm:"column:current_qty;default:0" json:"current_qty"`
 	TruesellQty7Day        float64   `gorm:"column:truesell_qty_7_day;default:0" json:"truesell_qty_7_day"`
@@ -154,7 +183,7 @@ type StockTarget struct {
 	CategoryID     *int      `gorm:"column:category_id" json:"category_id"`
 	TypeID         *int      `gorm:"column:type_id" json:"type_id"`
 	BrandID        *int      `gorm:"column:brand_id" json:"brand_id"`
-	PuProductID    string    `gorm:"column:pu_product_id" json:"pu_product_id"`
+	PuProductID    *int      `gorm:"column:pu_product_id" json:"pu_product_id"`
 	MinQty         float64   `gorm:"column:min_qty;default:0" json:"min_qty"`
 	MaxQty         float64   `gorm:"column:max_qty;default:0" json:"max_qty"`
 	SellMultiply   float64   `gorm:"column:sell_multiply;default:0" json:"sell_multiply"`

@@ -123,6 +123,8 @@ func main() {
 	// Auto-migrate missing columns and indexes on existing PostgreSQL tables
 	log.Println("Auto-migrating PostgreSQL table schema columns...")
 	if err := pgDB.AutoMigrate(
+		&models.Region{},
+		&models.Province{},
 		&models.Branch{},
 		&models.ProductBrand{},
 		&models.ProductCategory{},

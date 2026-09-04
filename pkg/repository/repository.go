@@ -12,6 +12,12 @@ import (
 
 // MasterRepository handles Master Data CRUD & Upsert operations
 type MasterRepository interface {
+	UpsertRegions(ctx context.Context, regions []models.Region) error
+	GetAllRegions(ctx context.Context) ([]models.Region, error)
+
+	UpsertProvinces(ctx context.Context, provinces []models.Province) error
+	GetAllProvinces(ctx context.Context) ([]models.Province, error)
+
 	UpsertBranches(ctx context.Context, branches []models.Branch) error
 	GetBranchByID(ctx context.Context, id int) (*models.Branch, error)
 	GetAllBranches(ctx context.Context) ([]models.Branch, error)
@@ -62,13 +68,48 @@ func NewPostgresRepository(db *gorm.DB) *postgresRepository {
 
 // --- MasterRepository Implementation ---
 
+func (r *postgresRepository) UpsertRegions(ctx context.Context, regions []models.Region) error {
+	if len(regions) == 0 {
+		return nil
+	}
+	return r.db.WithContext(ctx).Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "id"}},
+		DoUpdates: clause.AssignmentColumns([]string{"mysql_id", "name"}),
+	}).Create(&regions).Error
+}
+
+func (r *postgresRepository) GetAllRegions(ctx context.Context) ([]models.Region, error) {
+	var list []models.Region
+	err := r.db.WithContext(ctx).Find(&list).Error
+	return list, err
+}
+
+func (r *postgresRepository) UpsertProvinces(ctx context.Context, provinces []models.Province) error {
+	if len(provinces) == 0 {
+		return nil
+	}
+	return r.db.WithContext(ctx).Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "id"}},
+		DoUpdates: clause.AssignmentColumns([]string{"mysql_id", "name", "region_id"}),
+	}).Create(&provinces).Error
+}
+
+func (r *postgresRepository) GetAllProvinces(ctx context.Context) ([]models.Province, error) {
+	var list []models.Province
+	err := r.db.WithContext(ctx).Find(&list).Error
+	return list, err
+}
+
 func (r *postgresRepository) UpsertBranches(ctx context.Context, branches []models.Branch) error {
 	if len(branches) == 0 {
 		return nil
 	}
 	return r.db.WithContext(ctx).Clauses(clause.OnConflict{
-		Columns:   []clause.Column{{Name: "id"}},
-		DoUpdates: clause.AssignmentColumns([]string{"code", "name", "is_active", "updated_at"}),
+		Columns: []clause.Column{{Name: "id"}},
+		DoUpdates: clause.AssignmentColumns([]string{
+			"code", "name", "province_id", "mysql_province_id", "region_id", "mysql_region_id",
+			"location", "tel", "lat", "lng", "is_head_office", "is_active", "updated_at",
+		}),
 	}).Create(&branches).Error
 }
 
@@ -153,7 +194,7 @@ func (r *postgresRepository) UpsertProducts(ctx context.Context, products []mode
 	}
 	return r.db.WithContext(ctx).Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "id"}},
-		DoUpdates: clause.AssignmentColumns([]string{"pu_product_id", "brand_id", "category_id", "group_id", "type_id", "description", "status", "updated_at"}),
+		DoUpdates: clause.AssignmentColumns([]string{"code", "pu_product_id", "brand_id", "category_id", "group_id", "type_id", "description", "status", "updated_at"}),
 	}).Create(&products).Error
 }
 
@@ -213,9 +254,9 @@ func (r *postgresRepository) UpsertStockBalance(ctx context.Context, items []mod
 		return nil
 	}
 	return r.db.WithContext(ctx).Clauses(clause.OnConflict{
-		Columns: []clause.Column{{Name: "shop_id"}, {Name: "product_id"}},
+		Columns: []clause.Column{{Name: "shop_id"}, {Name: "pu_product_id"}},
 		DoUpdates: clause.AssignmentColumns([]string{
-			"pu_product_id", "qty", "current_qty", "truesell_qty_7_day", "target_qty_7_day_original",
+			"product_id", "qty", "current_qty", "truesell_qty_7_day", "target_qty_7_day_original",
 			"target_qty_7_day", "current_qty_by_type", "target_qty_by_type_7_day",
 			"min_qty", "max_qty", "po_qty", "trans_in_qty", "trans_out_qty", "po_status",
 			"truesell_qty_30_day", "target_qty_30_day_original", "target_qty_30_day",

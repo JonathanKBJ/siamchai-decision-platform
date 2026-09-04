@@ -7,11 +7,35 @@
 -- Enable Vector extension for RAG / Semantic Search
 CREATE EXTENSION IF NOT EXISTS vector;
 
--- 1. Master Data Tables
+-- 1. Master Data Tables (Geo & Branches)
+CREATE TABLE IF NOT EXISTS regions (
+    id INT PRIMARY KEY,
+    mysql_id INT,
+    name VARCHAR(255) NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS provinces (
+    id INT PRIMARY KEY,
+    mysql_id INT,
+    name VARCHAR(255) NOT NULL,
+    region_id INT REFERENCES regions(id),
+    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS branches (
     id INT PRIMARY KEY,
     code VARCHAR(50),
     name VARCHAR(255) NOT NULL,
+    province_id INT REFERENCES provinces(id),
+    mysql_province_id INT,
+    region_id INT REFERENCES regions(id),
+    mysql_region_id INT,
+    location TEXT,
+    tel VARCHAR(100),
+    lat NUMERIC(10, 8),
+    lng NUMERIC(11, 8),
+    is_head_office BOOLEAN DEFAULT FALSE,
     is_active BOOLEAN DEFAULT TRUE,
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
@@ -47,7 +71,8 @@ CREATE TABLE IF NOT EXISTS product_types (
 
 CREATE TABLE IF NOT EXISTS products (
     id INT PRIMARY KEY,
-    pu_product_id VARCHAR(50),
+    code VARCHAR(255),
+    pu_product_id INT,
     brand_id INT REFERENCES product_brands(id),
     category_id INT REFERENCES product_categories(id),
     group_id INT REFERENCES product_groups(id),
@@ -120,6 +145,9 @@ CREATE TABLE IF NOT EXISTS sell_default PARTITION OF sell DEFAULT;
 CREATE TABLE IF NOT EXISTS sell_detail_default PARTITION OF sell_detail DEFAULT;
 
 -- Performance Indexes
+CREATE INDEX IF NOT EXISTS idx_branches_province ON branches (province_id);
+CREATE INDEX IF NOT EXISTS idx_branches_region ON branches (region_id);
+CREATE INDEX IF NOT EXISTS idx_provinces_region ON provinces (region_id);
 CREATE INDEX IF NOT EXISTS idx_sell_shop_date ON sell (shop_id, sell_date);
 CREATE INDEX IF NOT EXISTS idx_sell_detail_shop_prod_date ON sell_detail (shop_id, product_id, sell_date);
 CREATE INDEX IF NOT EXISTS idx_sell_detail_company_date ON sell_detail (company_id, sell_date);
@@ -150,7 +178,7 @@ CREATE TABLE IF NOT EXISTS stock_balance (
     target_qty_by_type_30_day NUMERIC(12, 2) DEFAULT 0,
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-    CONSTRAINT idx_stock_balance_shop_prod UNIQUE (shop_id, product_id)
+    CONSTRAINT idx_stock_balance_shop_pu UNIQUE (shop_id, pu_product_id)
 );
 
 CREATE TABLE IF NOT EXISTS stock_targets (
@@ -160,7 +188,7 @@ CREATE TABLE IF NOT EXISTS stock_targets (
     category_id INT REFERENCES product_categories(id),
     type_id INT REFERENCES product_types(id),
     brand_id INT REFERENCES product_brands(id),
-    pu_product_id VARCHAR(50),
+    pu_product_id INT,
     min_qty NUMERIC(12, 2) DEFAULT 0,
     max_qty NUMERIC(12, 2) DEFAULT 0,
     sell_multiply NUMERIC(12, 4) DEFAULT 0,
@@ -180,3 +208,23 @@ CREATE TABLE IF NOT EXISTS product_embeddings (
     embedding vector(1536),
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
+
+-- 5. Analytical Views
+CREATE OR REPLACE VIEW v_branch_geographic_summary AS
+SELECT 
+    b.id AS branch_id,
+    b.code AS branch_code,
+    b.name AS branch_name,
+    p.id AS province_id,
+    p.name AS province_name,
+    r.id AS region_id,
+    r.name AS region_name,
+    b.location,
+    b.tel,
+    b.lat,
+    b.lng,
+    b.is_head_office,
+    b.is_active
+FROM branches b
+LEFT JOIN provinces p ON b.province_id = p.id
+LEFT JOIN regions r ON b.region_id = r.id;

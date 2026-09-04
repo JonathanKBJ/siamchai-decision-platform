@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"math"
 	"os"
 	"time"
 
@@ -33,11 +34,31 @@ func NewDataMigrator(oraDB, pgDB *gorm.DB) *DataMigrator {
 }
 
 // Oracle DTO structs (UPPERCASE column tags required for Oracle GORM driver)
+type OraRegion struct {
+	ID      int    `gorm:"column:ID"`
+	MysqlID *int   `gorm:"column:MYSQL_ID"`
+	Name    string `gorm:"column:NAME"`
+}
+
+type OraProvince struct {
+	ID       int    `gorm:"column:ID"`
+	MysqlID  *int   `gorm:"column:MYSQL_ID"`
+	Name     string `gorm:"column:NAME"`
+	RegionID *int   `gorm:"column:REGION_ID"`
+}
+
 type OraShop struct {
-	ID     int    `gorm:"column:ID"`
-	Code   string `gorm:"column:CODE"`
-	Name   string `gorm:"column:NAME"`
-	Active string `gorm:"column:ACTIVE"`
+	ID              int      `gorm:"column:ID"`
+	Code            string   `gorm:"column:CODE"`
+	Name            string   `gorm:"column:NAME"`
+	Location        string   `gorm:"column:LOCATION"`
+	Tel             string   `gorm:"column:TEL"`
+	Active          string   `gorm:"column:ACTIVE"`
+	Lat             *float64 `gorm:"column:LAT"`
+	Lng             *float64 `gorm:"column:LNG"`
+	MysqlProvinceID *int     `gorm:"column:MYSQLPROVINCEID"`
+	MysqlRegionID   *int     `gorm:"column:MYSQLREGIONID"`
+	HeadOffice      string   `gorm:"column:HEAD_OFFICE"`
 }
 
 type OraBrand struct {
@@ -66,7 +87,8 @@ type OraType struct {
 
 type OraProduct struct {
 	ID                int    `gorm:"column:ID"`
-	PuProductID       string `gorm:"column:PU_PRODUCT_ID"`
+	Code              string `gorm:"column:CODE"`
+	PuProductID       *int   `gorm:"column:PU_PRODUCT_ID"`
 	ProductBrandID    *int   `gorm:"column:PRODUCT_BRAND_ID"`
 	ProductCategoryID *int   `gorm:"column:PRODUCT_CATEGORY_ID"`
 	GroupID           *int   `gorm:"column:GROUP_ID"`
@@ -75,10 +97,26 @@ type OraProduct struct {
 	Status            string `gorm:"column:STATUS"`
 }
 
-type OraStockShop struct {
-	ShopID    int `gorm:"column:SHOP_ID"`
-	ProductID int `gorm:"column:PRODUCT_ID"`
-	Qty       int `gorm:"column:QTY"`
+type OraStockBalance struct {
+	ID                     int     `gorm:"column:ID"`
+	PuProductID            int     `gorm:"column:PU_PRODUCT_ID"`
+	ShopID                 int     `gorm:"column:SHOP_ID"`
+	CurrentQty             float64 `gorm:"column:CURRENT_QTY"`
+	TruesellQty7Day        float64 `gorm:"column:TRUESELL_QTY_7_DAY"`
+	TargetQty7DayOriginal  float64 `gorm:"column:TARGET_QTY_7_DAY_ORIGINAL"`
+	TargetQty7Day          float64 `gorm:"column:TARGET_QTY_7_DAY"`
+	CurrentQtyByType       float64 `gorm:"column:CURRENT_QTY_BY_TYPE"`
+	TargetQtyByType7Day    float64 `gorm:"column:TARGET_QTY_BY_TYPE_7_DAY"`
+	MinQty                 float64 `gorm:"column:MIN_QTY"`
+	MaxQty                 float64 `gorm:"column:MAX_QTY"`
+	PoQty                  float64 `gorm:"column:PO_QTY"`
+	TransInQty             float64 `gorm:"column:TRANS_IN_QTY"`
+	TransOutQty            float64 `gorm:"column:TRANS_OUT_QTY"`
+	PoStatus               string  `gorm:"column:PO_STATUS"`
+	TruesellQty30Day       float64 `gorm:"column:TRUESELL_QTY_30_DAY"`
+	TargetQty30DayOriginal float64 `gorm:"column:TARGET_QTY_30_DAY_ORIGINAL"`
+	TargetQty30Day         float64 `gorm:"column:TARGET_QTY_30_DAY"`
+	TargetQtyByType30Day   float64 `gorm:"column:TARGET_QTY_BY_TYPE_30_DAY"`
 }
 
 type OraStockTarget struct {
@@ -131,7 +169,7 @@ type OraSellDetail struct {
 // TruncateTargetTables clears existing PostgreSQL tables to ensure clean migration
 func (m *DataMigrator) TruncateTargetTables(ctx context.Context) error {
 	log.Println("[ETL Reset] Dropping and Recreating target PostgreSQL tables for clean migration...")
-	sqlDrop := `DROP TABLE IF EXISTS sell_detail_default, sell_default, sell_detail, sell, sales_items, sales, stock_balance, stock_targets, product_embeddings, products, suppliers, customers, product_brands, product_categories, product_groups, product_types, branches CASCADE;`
+	sqlDrop := `DROP TABLE IF EXISTS sell_detail_default, sell_default, sell_detail, sell, sales_items, sales, stock_balance, stock_targets, product_embeddings, products, suppliers, customers, product_brands, product_categories, product_groups, product_types, branches, provinces, regions CASCADE;`
 	if err := m.pgDB.WithContext(ctx).Exec(sqlDrop).Error; err != nil {
 		log.Printf("Warning dropping tables: %v", err)
 	}
@@ -178,6 +216,16 @@ func (m *DataMigrator) RunMigration(ctx context.Context, mode, salesStartDate, s
 	}
 	if err := database.EnsureMonthlyPartitionsForRange(m.pgDB, startT, endT); err != nil {
 		log.Printf("Warning ensuring range partitions: %v", err)
+	}
+
+	// 1.1 Migrate Regions
+	if err := m.migrateRegions(ctx); err != nil {
+		return fmt.Errorf("region migration failed: %w", err)
+	}
+
+	// 1.2 Migrate Provinces
+	if err := m.migrateProvinces(ctx); err != nil {
+		return fmt.Errorf("province migration failed: %w", err)
 	}
 
 	// 2. Migrate Branches (ALL Shops per user instruction)
@@ -239,27 +287,133 @@ func (m *DataMigrator) RunFullMigration(ctx context.Context, salesStartDate, sal
 	return m.RunMigration(ctx, "full", salesStartDate, salesEndDate, true)
 }
 
+func (m *DataMigrator) migrateRegions(ctx context.Context) error {
+	log.Println("[ETL 0.1/8] Migrating Regions...")
+	var list []OraRegion
+	if err := m.oraDB.Table("region").Scan(&list).Error; err != nil {
+		return fmt.Errorf("failed fetching regions from oracle: %w", err)
+	}
+
+	var pgList []models.Region
+	for _, r := range list {
+		pgList = append(pgList, models.Region{
+			ID:      r.ID,
+			MysqlID: r.MysqlID,
+			Name:    r.Name,
+		})
+	}
+
+	if err := m.repo.UpsertRegions(ctx, pgList); err != nil {
+		return fmt.Errorf("upserting regions failed: %w", err)
+	}
+	log.Printf(" -> Successfully migrated %d regions.", len(pgList))
+	return nil
+}
+
+func (m *DataMigrator) migrateProvinces(ctx context.Context) error {
+	log.Println("[ETL 0.2/8] Migrating Provinces...")
+	var list []OraProvince
+	if err := m.oraDB.Table("province").Scan(&list).Error; err != nil {
+		return fmt.Errorf("failed fetching provinces from oracle: %w", err)
+	}
+
+	var validRegions []int
+	m.pgDB.WithContext(ctx).Model(&models.Region{}).Pluck("id", &validRegions)
+	regMap := make(map[int]bool)
+	for _, id := range validRegions {
+		regMap[id] = true
+	}
+
+	var pgList []models.Province
+	for _, p := range list {
+		var regID *int
+		if p.RegionID != nil && regMap[*p.RegionID] {
+			regID = p.RegionID
+		}
+		pgList = append(pgList, models.Province{
+			ID:       p.ID,
+			MysqlID:  p.MysqlID,
+			Name:     p.Name,
+			RegionID: regID,
+		})
+	}
+
+	if err := m.repo.UpsertProvinces(ctx, pgList); err != nil {
+		return fmt.Errorf("upserting provinces failed: %w", err)
+	}
+	log.Printf(" -> Successfully migrated %d provinces.", len(pgList))
+	return nil
+}
+
 func (m *DataMigrator) migrateBranches(ctx context.Context) error {
-	log.Println("[ETL 1/8] Migrating Branches (All Shops)...")
+	log.Println("[ETL 1/8] Migrating Branches (All Shops with Geo/Location)...")
 	var oraShops []OraShop
 	if err := m.oraDB.Table("shop").Scan(&oraShops).Error; err != nil {
 		return err
 	}
 
+	// Fetch valid provinces and regions mapping
+	var provinces []models.Province
+	m.pgDB.WithContext(ctx).Find(&provinces)
+	provinceByMysqlID := make(map[int]int)
+	provinceByID := make(map[int]int)
+	for _, p := range provinces {
+		provinceByID[p.ID] = p.ID
+		if p.MysqlID != nil {
+			provinceByMysqlID[*p.MysqlID] = p.ID
+		}
+	}
+
+	var regions []models.Region
+	m.pgDB.WithContext(ctx).Find(&regions)
+	regionByMysqlID := make(map[int]int)
+	regionByID := make(map[int]int)
+	for _, r := range regions {
+		regionByID[r.ID] = r.ID
+		if r.MysqlID != nil {
+			regionByMysqlID[*r.MysqlID] = r.ID
+		}
+	}
+
 	var pgBranches []models.Branch
 	for _, s := range oraShops {
+		var provinceID, regionID *int
+		if s.MysqlProvinceID != nil {
+			if pid, exists := provinceByMysqlID[*s.MysqlProvinceID]; exists {
+				provinceID = &pid
+			} else if pid, exists := provinceByID[*s.MysqlProvinceID]; exists {
+				provinceID = &pid
+			}
+		}
+		if s.MysqlRegionID != nil {
+			if rid, exists := regionByMysqlID[*s.MysqlRegionID]; exists {
+				regionID = &rid
+			} else if rid, exists := regionByID[*s.MysqlRegionID]; exists {
+				regionID = &rid
+			}
+		}
+
 		pgBranches = append(pgBranches, models.Branch{
-			ID:       s.ID,
-			Code:     s.Code,
-			Name:     s.Name,
-			IsActive: s.Active == "Y",
+			ID:              s.ID,
+			Code:            s.Code,
+			Name:            s.Name,
+			ProvinceID:      provinceID,
+			MysqlProvinceID: s.MysqlProvinceID,
+			RegionID:        regionID,
+			MysqlRegionID:   s.MysqlRegionID,
+			Location:        s.Location,
+			Tel:             s.Tel,
+			Lat:             s.Lat,
+			Lng:             s.Lng,
+			IsHeadOffice:    s.HeadOffice == "Y",
+			IsActive:        s.Active == "Y",
 		})
 	}
 
 	if err := m.repo.UpsertBranches(ctx, pgBranches); err != nil {
 		return err
 	}
-	log.Printf(" -> Successfully migrated %d branches.", len(pgBranches))
+	log.Printf(" -> Successfully migrated %d branches with geographic dimensions.", len(pgBranches))
 	return nil
 }
 
@@ -384,13 +538,21 @@ func (m *DataMigrator) migrateProducts(ctx context.Context) error {
 	m.pgDB.WithContext(ctx).Model(&models.ProductType{}).Pluck("id", &validTypes)
 
 	brandMap := make(map[int]bool)
-	for _, id := range validBrands { brandMap[id] = true }
+	for _, id := range validBrands {
+		brandMap[id] = true
+	}
 	catMap := make(map[int]bool)
-	for _, id := range validCats { catMap[id] = true }
+	for _, id := range validCats {
+		catMap[id] = true
+	}
 	groupMap := make(map[int]bool)
-	for _, id := range validGroups { groupMap[id] = true }
+	for _, id := range validGroups {
+		groupMap[id] = true
+	}
 	typeMap := make(map[int]bool)
-	for _, id := range validTypes { typeMap[id] = true }
+	for _, id := range validTypes {
+		typeMap[id] = true
+	}
 
 	var pgList []models.Product
 	for _, item := range list {
@@ -419,6 +581,7 @@ func (m *DataMigrator) migrateProducts(ctx context.Context) error {
 
 		pgList = append(pgList, models.Product{
 			ID:          item.ID,
+			Code:        item.Code,
 			PuProductID: item.PuProductID,
 			BrandID:     brandID,
 			CategoryID:  catID,
@@ -444,43 +607,69 @@ func (m *DataMigrator) migrateProducts(ctx context.Context) error {
 }
 
 func (m *DataMigrator) migrateStockBalance(ctx context.Context) error {
-	log.Println("[ETL 7/8] Migrating Stock Balance (paged)...")
+	log.Println("[ETL 7/8] Migrating Stock Balance (from bs_balance_stock) (paged)...")
 
-	var validShops, validProds []int
+	var validShops []int
 	m.pgDB.WithContext(ctx).Model(&models.Branch{}).Pluck("id", &validShops)
-	m.pgDB.WithContext(ctx).Model(&models.Product{}).Pluck("id", &validProds)
 	shopMap := make(map[int]bool)
-	for _, id := range validShops { shopMap[id] = true }
-	prodMap := make(map[int]bool)
-	for _, id := range validProds { prodMap[id] = true }
-
-	type stockKey struct {
-		shopID    int
-		productID int
+	for _, id := range validShops {
+		shopMap[id] = true
 	}
-	aggregated := make(map[stockKey]int)
+
+	type balanceKey struct {
+		shopID      int
+		puProductID int
+	}
+	aggregated := make(map[balanceKey]models.StockBalance)
+	aggregatedMaxID := make(map[balanceKey]int)
 
 	chunkSize := 20000
 	offset := 0
 
 	for {
-		var list []OraStockShop
-		err := m.oraDB.Table("stock_shop").
-			Select("SHOP_ID, PRODUCT_ID, QTY").
+		var list []OraStockBalance
+		err := m.oraDB.Table("bs_balance_stock").
+			Select("ID, PU_PRODUCT_ID, SHOP_ID, CURRENT_QTY, TRUESELL_QTY_7_DAY, TARGET_QTY_7_DAY_ORIGINAL, TARGET_QTY_7_DAY, CURRENT_QTY_BY_TYPE, TARGET_QTY_BY_TYPE_7_DAY, MIN_QTY, MAX_QTY, PO_QTY, TRANS_IN_QTY, TRANS_OUT_QTY, PO_STATUS, TRUESELL_QTY_30_DAY, TARGET_QTY_30_DAY_ORIGINAL, TARGET_QTY_30_DAY, TARGET_QTY_BY_TYPE_30_DAY").
 			Limit(chunkSize).Offset(offset).
 			Find(&list).Error
 
 		if err != nil {
-			return fmt.Errorf("failed scanning stock_shop at offset %d: %w", offset, err)
+			return fmt.Errorf("failed scanning bs_balance_stock at offset %d: %w", offset, err)
 		}
 		if len(list) == 0 {
 			break
 		}
 
 		for _, item := range list {
-			if item.ShopID > 0 && item.ProductID > 0 && shopMap[item.ShopID] && prodMap[item.ProductID] {
-				key := stockKey{shopID: item.ShopID, productID: item.ProductID}
-				aggregated[key] += item.Qty
+			if item.ShopID > 0 && item.PuProductID > 0 && shopMap[item.ShopID] {
+				sID := item.ShopID
+				puID := item.PuProductID
+				key := balanceKey{shopID: sID, puProductID: puID}
+
+				if maxID, exists := aggregatedMaxID[key]; !exists || item.ID > maxID {
+					aggregatedMaxID[key] = item.ID
+					aggregated[key] = models.StockBalance{
+						ShopID:                 &sID,
+						PuProductID:            &puID,
+						Qty:                    int(item.CurrentQty),
+						CurrentQty:             item.CurrentQty,
+						TruesellQty7Day:        item.TruesellQty7Day,
+						TargetQty7DayOriginal:  item.TargetQty7DayOriginal,
+						TargetQty7Day:          item.TargetQty7Day,
+						CurrentQtyByType:       item.CurrentQtyByType,
+						TargetQtyByType7Day:    item.TargetQtyByType7Day,
+						MinQty:                 item.MinQty,
+						MaxQty:                 item.MaxQty,
+						PoQty:                  item.PoQty,
+						TransInQty:             item.TransInQty,
+						TransOutQty:            item.TransOutQty,
+						PoStatus:               item.PoStatus,
+						TruesellQty30Day:       item.TruesellQty30Day,
+						TargetQty30DayOriginal: item.TargetQty30DayOriginal,
+						TargetQty30Day:         item.TargetQty30Day,
+						TargetQtyByType30Day:   item.TargetQtyByType30Day,
+					}
+				}
 			}
 		}
 
@@ -491,14 +680,8 @@ func (m *DataMigrator) migrateStockBalance(ctx context.Context) error {
 	}
 
 	var pgList []models.StockBalance
-	for k, qty := range aggregated {
-		sID := k.shopID
-		pID := k.productID
-		pgList = append(pgList, models.StockBalance{
-			ShopID:    &sID,
-			ProductID: &pID,
-			Qty:       qty,
-		})
+	for _, sb := range aggregated {
+		pgList = append(pgList, sb)
 	}
 
 	batchSize := 500
@@ -511,7 +694,7 @@ func (m *DataMigrator) migrateStockBalance(ctx context.Context) error {
 			return fmt.Errorf("upserting stock balance batch failed: %w", err)
 		}
 	}
-	log.Printf(" -> Successfully aggregated and migrated %d stock balance records.", len(pgList))
+	log.Printf(" -> Successfully aggregated and migrated %d stock balance records from bs_balance_stock.", len(pgList))
 	return nil
 }
 
@@ -643,11 +826,17 @@ func (m *DataMigrator) migrateSellData(
 	m.pgDB.WithContext(ctx).Model(&models.Supplier{}).Pluck("id", &validSuppliers)
 
 	shopMap := make(map[int]bool)
-	for _, id := range validShops { shopMap[id] = true }
+	for _, id := range validShops {
+		shopMap[id] = true
+	}
 	prodMap := make(map[int]bool)
-	for _, id := range validProds { prodMap[id] = true }
+	for _, id := range validProds {
+		prodMap[id] = true
+	}
 	supplierMap := make(map[int]bool)
-	for _, id := range validSuppliers { supplierMap[id] = true }
+	for _, id := range validSuppliers {
+		supplierMap[id] = true
+	}
 
 	// 1. Fetch Sell headers
 	querySell := fmt.Sprintf("sell_date >= DATE '%s' AND sell_date <= TIMESTAMP '%s 23:59:59'", startDateStr, endDateStr)
@@ -716,7 +905,7 @@ func (m *DataMigrator) migrateSellData(
 			CompanyID: companyID,
 			ProductID: prodID,
 			ShopID:    shopID,
-			Qty:       d.Qty,
+			Qty:       int(math.Round(d.Qty)),
 			SellDate:  d.SellDate,
 		})
 	}
